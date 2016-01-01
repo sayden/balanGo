@@ -15,6 +15,10 @@ import (
 
 var hostCh = make(chan *types.HostPayload, 1)
 
+func main() {
+	startBalancer(os.Args)
+}
+
 func startBalancer(args []string) {
 	if len(args) < 3 {
 		log.Fatalf("Usage: %s <port to listen> <host to route to> <host to route to>...", os.Args[0])
@@ -43,14 +47,6 @@ func startBalancer(args []string) {
 	}
 	proxy := proxy.NewMultipleHostReverseProxy(hostCh)
 	log.Fatal(http.ListenAndServe(":"+listeningPort, proxy))
-}
-
-func main() {
-	startBalancer(os.Args)
-}
-
-func removeHost(seconds int, addr *string) {
-	fmt.Println(*addr)
 }
 
 // addHostPostHandler is the POST handler that will add a new host to the
