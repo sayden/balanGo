@@ -17,8 +17,12 @@ var targets = make([]*url.URL, 0)
 var addDelayedTime int = 20 //seconds
 var mutex sync.Mutex
 
-func GetTargets() []*url.URL {
-	return targets
+func GetTargetsLength() int {
+	return len(targets)
+}
+
+func GetTargetsWithChannel(c chan *[]*url.URL) {
+	c <- &targets
 }
 
 func HostsHandler(hostCh chan *types.HostPayload) {
