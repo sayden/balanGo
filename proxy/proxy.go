@@ -14,21 +14,31 @@ import (
 )
 
 var targets = make([]*url.URL, 0)
-var addDelayedTime int = 20 //seconds
+var addDelayedTime int = 5 //seconds
 var mutex sync.Mutex
 
-func GetTargetsLength() int {
-	return len(targets)
-}
+func GetTargetsLengthWithChannel(hostCh chan *types.HostPayload) int {
+	ch := make(chan interface{})
+	defer close(ch)
+	hostCh <- &types.HostPayload{
+		Action:      "length",
+		ReceivingCh: ch,
+	}
 
-func GetTargetsWithChannel(c chan *[]*url.URL) {
-	c <- &targets
+	l := <-ch
+	length := l.(int)
+
+	return length
 }
 
 func HostsHandler(hostCh chan *types.HostPayload) {
 	for {
 		for p := range hostCh {
 			switch p.Action {
+			case "get":
+				p.TargetsCh <- targets
+			case "length":
+				p.ReceivingCh <- len(targets)
 			case "add":
 				//Check if the route exists already
 				if stringInSlice(&p.Host, &targets) == false {
@@ -96,7 +106,16 @@ func getURLFromString(addr *string) *url.URL {
 func NewMultipleHostReverseProxy(hostCh chan *types.HostPayload) *httputil.ReverseProxy {
 
 	director := func(req *http.Request) {
-		directorHandler(req, &targets)
+		ch := make(chan []*url.URL)
+		defer close(ch)
+		hostCh <- &types.HostPayload{
+			Action:    "get",
+			TargetsCh: ch,
+		}
+
+		ts := <-ch
+
+		directorHandler(req, ts)
 	}
 
 	transport := http.Transport{
@@ -105,7 +124,14 @@ func NewMultipleHostReverseProxy(hostCh chan *types.HostPayload) *httputil.Rever
 		},
 
 		Dial: func(network, addr string) (net.Conn, error) {
-			return dialHandler(network, addr, hostCh)
+			ch := make(chan []*url.URL)
+			defer close(ch)
+			hostCh <- &types.HostPayload{
+				Action:    "get",
+				TargetsCh: ch,
+			}
+			ts := <-ch
+			return dialHandler(network, addr, hostCh, ts)
 		},
 
 		TLSHandshakeTimeout: 10 * time.Second,
@@ -117,20 +143,20 @@ func NewMultipleHostReverseProxy(hostCh chan *types.HostPayload) *httputil.Rever
 	}
 }
 
-func directorHandler(req *http.Request, targets *[]*url.URL) {
-	tLength := len(*targets)
-	fmt.Printf("CALLING DIRECTOR WITH %d targets\n", tLength)
-	ts := *targets
+func directorHandler(req *http.Request, targets []*url.URL) {
+	tLength := len(targets)
+	//	fmt.Printf("CALLING DIRECTOR WITH %d targets\n", tLength)
+	ts := targets
 	t := ts[rand.Int()%tLength]
 	req.URL.Scheme = t.Scheme
 	req.URL.Host = t.Host
 	req.URL.Path = t.Path
 }
 
-func dialHandler(network, addr string, hostCh chan *types.HostPayload) (net.Conn, error) {
+func dialHandler(network, addr string, hostCh chan *types.HostPayload, ts []*url.URL) (net.Conn, error) {
 	dial := (&net.Dialer{
-		Timeout:   20 * time.Second,
-		KeepAlive: 20 * time.Second,
+		Timeout:   time.Duration(addDelayedTime) * time.Second,
+		KeepAlive: time.Duration(addDelayedTime) * time.Second,
 	})
 
 	conn, err := dial.Dial(network, addr)

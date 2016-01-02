@@ -35,7 +35,7 @@ func AddHostPostHandler(w http.ResponseWriter, r *http.Request, hostCh chan *typ
 	defer r.Body.Close()
 	bodyByte, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		em := "Error trying to parse body"
+		em := "Error trying to read contents of body"
 		log.Println(em)
 		w.WriteHeader(500)
 

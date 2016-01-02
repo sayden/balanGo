@@ -35,8 +35,8 @@ func startBalancer(args []string) {
 	// Create the server that adds new hosts to the balancer
 	registry.StartRegistryServer(hostCh)
 
-	for proxy.GetTargetsLength() == 0 {
-		time.Sleep(time.Millisecond)
+	for proxy.GetTargetsLengthWithChannel(hostCh) == 0 {
+		time.Sleep(time.Second)
 	}
 	proxy := proxy.NewMultipleHostReverseProxy(hostCh)
 	log.Fatal(http.ListenAndServe(":"+listeningPort, proxy))
