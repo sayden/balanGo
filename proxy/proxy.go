@@ -9,13 +9,10 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"sync"
 	"time"
 )
 
-var targets = make([]*url.URL, 0)
-var addDelayedTime int = 5 //seconds
-var mutex sync.Mutex
+var addDelayedTime int = 30 //seconds
 
 func GetTargetsLengthWithChannel(hostCh chan *types.HostPayload) int {
 	ch := make(chan interface{})
@@ -32,6 +29,8 @@ func GetTargetsLengthWithChannel(hostCh chan *types.HostPayload) int {
 }
 
 func HostsHandler(hostCh chan *types.HostPayload) {
+	targets := make([]*url.URL, 0)
+
 	for {
 		for p := range hostCh {
 			switch p.Action {
@@ -43,25 +42,23 @@ func HostsHandler(hostCh chan *types.HostPayload) {
 				//Check if the route exists already
 				if stringInSlice(&p.Host, &targets) == false {
 					url := getURLFromString(&p.Host)
-					mutex.Lock()
 					targets = append(targets, url)
-					mutex.Unlock()
 				}
 
-				log.Printf("Current routes are: %s\n", targets)
+				log.Printf("After adding, routes are: %s\n", targets)
 			case "remove":
-				newTargets := make([]*url.URL, len(targets)-1)
-				i := 0
-				for _, t := range targets {
-					if t.Host != p.Host {
-						newTargets[i] = t
-						i++
+				i := -1
+				for iter := 0; iter < len(targets); iter++ {
+					t := targets[iter]
+					if t.Host == p.Host {
+						i = iter
 					}
 				}
 
-				mutex.Lock()
-				targets = newTargets
-				mutex.Unlock()
+				if i != -1 {
+					targets = append(targets[:i], targets[i+1:]...)
+				}
+				log.Printf("After remove, routes are: %s\n", targets)
 
 				//Now add it again after some time
 				go addTargetDelayed(&p.Host, hostCh)
@@ -71,6 +68,7 @@ func HostsHandler(hostCh chan *types.HostPayload) {
 }
 
 func addTargetDelayed(t *string, tCh chan *types.HostPayload) {
+	fmt.Printf("Adding target %s again after %d seconds\n", *t, addDelayedTime)
 	time.Sleep(time.Second * time.Duration(addDelayedTime))
 	AddTarget(*t, tCh)
 }
@@ -86,12 +84,10 @@ func stringInSlice(a *string, list *[]*url.URL) bool {
 }
 
 func AddTarget(h string, hostCh chan *types.HostPayload) {
-	go func() {
-		hostCh <- &types.HostPayload{
-			Action: "add",
-			Host:   h,
-		}
-	}()
+	hostCh <- &types.HostPayload{
+		Action: "add",
+		Host:   h,
+	}
 }
 
 func getURLFromString(addr *string) *url.URL {
@@ -124,14 +120,7 @@ func NewMultipleHostReverseProxy(hostCh chan *types.HostPayload) *httputil.Rever
 		},
 
 		Dial: func(network, addr string) (net.Conn, error) {
-			ch := make(chan []*url.URL)
-			defer close(ch)
-			hostCh <- &types.HostPayload{
-				Action:    "get",
-				TargetsCh: ch,
-			}
-			ts := <-ch
-			return dialHandler(network, addr, hostCh, ts)
+			return dialHandler(network, addr, hostCh)
 		},
 
 		TLSHandshakeTimeout: 10 * time.Second,
@@ -145,27 +134,43 @@ func NewMultipleHostReverseProxy(hostCh chan *types.HostPayload) *httputil.Rever
 
 func directorHandler(req *http.Request, targets []*url.URL) {
 	tLength := len(targets)
-	//	fmt.Printf("CALLING DIRECTOR WITH %d targets\n", tLength)
 	ts := targets
 	t := ts[rand.Int()%tLength]
-	req.URL.Scheme = t.Scheme
+	req.URL.Scheme = "http"
 	req.URL.Host = t.Host
 	req.URL.Path = t.Path
 }
 
-func dialHandler(network, addr string, hostCh chan *types.HostPayload, ts []*url.URL) (net.Conn, error) {
+func dialHandler(network, addr string, hostCh chan *types.HostPayload) (net.Conn, error) {
+
+	conn := getGoodTarget(hostCh, network)
+
+	return conn, nil
+}
+
+func getGoodTarget(hostCh chan *types.HostPayload, network string) net.Conn {
 	dial := (&net.Dialer{
 		Timeout:   time.Duration(addDelayedTime) * time.Second,
 		KeepAlive: time.Duration(addDelayedTime) * time.Second,
 	})
 
-	conn, err := dial.Dial(network, addr)
-	if err != nil {
-		println("Error during DIAL:", err.Error())
+	ch := make(chan []*url.URL)
+	hostCh <- &types.HostPayload{
+		Action:    "get",
+		TargetsCh: ch,
+	}
+	ts := <-ch
+	close(ch)
+
+	for {
+		i := rand.Int() % len(ts)
+		addr := ts[i].Host
+		conn, err := dial.Dial(network, addr)
+		if err == nil {
+			return conn
+		}
 		removeTarget(&addr, hostCh)
 	}
-
-	return conn, err
 }
 
 func removeTarget(addr *string, hostCh chan *types.HostPayload) {

@@ -9,11 +9,14 @@ import (
 	"github.com/sayden/go-reverse-proxy/proxy"
 	"github.com/sayden/go-reverse-proxy/registry"
 	"github.com/sayden/go-reverse-proxy/types"
+	"runtime"
 )
 
 var hostCh = make(chan *types.HostPayload, 1)
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU() - 1)
+
 	startBalancer(os.Args)
 }
 
@@ -36,7 +39,7 @@ func startBalancer(args []string) {
 	registry.StartRegistryServer(hostCh)
 
 	for proxy.GetTargetsLengthWithChannel(hostCh) == 0 {
-		time.Sleep(time.Second)
+		time.Sleep(time.Millisecond)
 	}
 	proxy := proxy.NewMultipleHostReverseProxy(hostCh)
 	log.Fatal(http.ListenAndServe(":"+listeningPort, proxy))
