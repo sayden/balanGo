@@ -1,4 +1,4 @@
-# balanGo
+# WIP balanGo
 A load balancer written in Go
 
 # Usage
